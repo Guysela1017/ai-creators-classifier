@@ -4,3 +4,4 @@ anthropic==0.109.1
 requests==2.34.2
 yt-dlp==2026.6.9
 ddgs==9.14.4
+gunicorn==21.2.0

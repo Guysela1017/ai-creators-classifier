@@ -8,4 +8,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD python server.py
+CMD gunicorn --bind 0.0.0.0:$PORT --timeout 600 --workers 1 --threads 4 server:app

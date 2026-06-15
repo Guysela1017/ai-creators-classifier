@@ -36,6 +36,7 @@ YT_HEADERS = {
 
 HAIKU  = "claude-haiku-4-5-20251001"
 SONNET = "claude-sonnet-4-6"
+CLOUD_MODE = bool(os.environ.get('ANTHROPIC_API_KEY'))  # skip heavy ffmpeg on free tier
 
 # ─── Raw data fetchers (no Claude) ────────────────────────────────────────────
 
@@ -356,13 +357,13 @@ def run_full_pipeline(client, creator):
     # ── Phase 2: fetch raw video data (no Claude) — all in parallel ──
     def fetch_video_raw(entry):
         vid_id = entry['id']
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2 if CLOUD_MODE else 3) as ex:
             f_c = ex.submit(fetch_comments, vid_id)
             f_t = ex.submit(fetch_transcript, vid_id)
-            f_f = ex.submit(fetch_frames, vid_id, 3)
+            f_f = ex.submit(fetch_frames, vid_id, 3) if not CLOUD_MODE else None
             c_data     = f_c.result()
             transcript = f_t.result()
-            frames     = f_f.result()
+            frames     = [] if CLOUD_MODE else f_f.result()
         return {
             'id': vid_id,
             'title':       c_data.get('title', entry['title']),
