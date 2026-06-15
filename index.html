@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Influencer Classifier — Artlist</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f3; color: #1a1a1a; min-height: 100vh; }
+  
+  .topbar { background: #1a1a1a; padding: 14px 32px; display: flex; align-items: center; gap: 12px; }
+  .topbar-logo { color: #f5c842; font-size: 18px; font-weight: 700; letter-spacing: -0.5px; }
+  .topbar-title { color: #999; font-size: 14px; }
+
+  .main { max-width: 900px; margin: 0 auto; padding: 40px 24px; }
+
+  .api-card { background: white; border-radius: 12px; border: 1px solid #e5e5e5; padding: 20px 24px; margin-bottom: 24px; display: flex; align-items: center; gap: 16px; }
+  .api-card label { font-size: 13px; font-weight: 500; color: #555; white-space: nowrap; }
+  .api-input { flex: 1; font-size: 13px; padding: 9px 12px; border-radius: 8px; border: 1px solid #ddd; font-family: monospace; color: #1a1a1a; background: #fafafa; }
+  .api-input:focus { outline: none; border-color: #1a1a1a; background: white; }
+  .api-toggle { font-size: 12px; color: #888; cursor: pointer; background: none; border: none; padding: 4px 8px; border-radius: 4px; }
+  .api-toggle:hover { background: #f0f0f0; }
+
+  .upload-card { background: white; border-radius: 12px; border: 2px dashed #ddd; padding: 40px; text-align: center; cursor: pointer; margin-bottom: 24px; transition: all 0.15s; }
+  .upload-card:hover { border-color: #1a1a1a; background: #fafafa; }
+  .upload-card.loaded { border-style: solid; border-color: #1a1a1a; background: #fafafa; }
+  .upload-icon { font-size: 32px; margin-bottom: 12px; }
+  .upload-title { font-size: 15px; font-weight: 500; margin-bottom: 6px; }
+  .upload-sub { font-size: 13px; color: #888; }
+
+  .controls-row { display: flex; gap: 12px; align-items: center; margin-bottom: 24px; flex-wrap: wrap; }
+  select { font-size: 13px; padding: 9px 12px; border-radius: 8px; border: 1px solid #ddd; background: white; color: #1a1a1a; cursor: pointer; }
+  select:focus { outline: none; border-color: #1a1a1a; }
+  .btn-primary { font-size: 14px; font-weight: 500; padding: 10px 24px; border-radius: 8px; border: none; background: #1a1a1a; color: white; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: opacity 0.15s; }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary:hover:not(:disabled) { opacity: 0.85; }
+  .btn-secondary { font-size: 13px; padding: 9px 16px; border-radius: 8px; border: 1px solid #ddd; background: white; color: #1a1a1a; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+  .btn-secondary:hover { background: #f5f5f3; }
+
+  .pipeline { display: flex; flex-direction: column; gap: 8px; margin-bottom: 24px; }
+  .agent { background: white; border-radius: 10px; border: 1px solid #e5e5e5; padding: 14px 16px; }
+  .agent-header { display: flex; align-items: center; gap: 10px; }
+  .agent-dot { width: 8px; height: 8px; border-radius: 50%; background: #ddd; flex-shrink: 0; transition: background 0.3s; }
+  .agent-dot.running { background: #2563eb; animation: pulse 1s infinite; }
+  .agent-dot.done { background: #16a34a; }
+  .agent-dot.error { background: #dc2626; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .agent-name { font-size: 13px; font-weight: 500; flex: 1; }
+  .agent-status { font-size: 12px; color: #888; }
+  .agent-status.running { color: #2563eb; }
+  .agent-status.done { color: #16a34a; }
+  .agent-log { margin-top: 10px; padding: 10px 12px; background: #f5f5f3; border-radius: 6px; font-size: 12px; color: #555; line-height: 1.7; font-family: monospace; max-height: 80px; overflow-y: auto; display: none; }
+  .agent-log.show { display: block; }
+
+  .progress-wrap { background: #e5e5e5; border-radius: 99px; height: 4px; margin-bottom: 24px; display: none; }
+  .progress-bar { height: 4px; border-radius: 99px; background: #1a1a1a; transition: width 0.4s; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; display: none; }
+  .stat { background: white; border-radius: 10px; border: 1px solid #e5e5e5; padding: 14px 16px; }
+  .stat-label { font-size: 11px; color: #888; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-val { font-size: 24px; font-weight: 600; }
+
+  .results { background: white; border-radius: 12px; border: 1px solid #e5e5e5; overflow: hidden; display: none; }
+  .results-header { padding: 16px 20px; border-bottom: 1px solid #e5e5e5; display: flex; align-items: center; justify-content: space-between; }
+  .results-header h2 { font-size: 15px; font-weight: 500; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+  th { text-align: left; padding: 8px 12px; border-bottom: 1px solid #e5e5e5; font-size: 10px; font-weight: 500; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
+  td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; color: #1a1a1a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #fafafa; }
+  .col-name { width: 14%; }
+  .col-type { width: 13%; }
+  .col-sub { width: 16%; }
+  .col-ctype { width: 15%; }
+  .col-goal { width: 13%; }
+  .col-conf { width: 9%; }
+  .col-reason { width: 5%; }
+
+  .badge { display: inline-block; font-size: 11px; padding: 3px 9px; border-radius: 99px; font-weight: 500; }
+  .badge-ai { background: #dbeafe; color: #1d4ed8; }
+  .badge-film { background: #dcfce7; color: #15803d; }
+  .badge-marketing { background: #fef9c3; color: #854d0e; }
+  .badge-bigname { background: #ede9fe; color: #6d28d9; }
+  .badge-high { background: #dcfce7; color: #15803d; }
+  .badge-mid { background: #fef9c3; color: #854d0e; }
+  .badge-low { background: #fee2e2; color: #b91c1c; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-logo">▲rtlist</div>
+  <div class="topbar-title">Influencer Classifier</div>
+</div>
+
+<div class="main">
+
+  <div class="api-card">
+    <label>Anthropic API Key</label>
+    <input type="password" id="apiKey" class="api-input" placeholder="sk-ant-api03-..." />
+    <button class="api-toggle" onclick="toggleKey()">Show</button>
+  </div>
+
+  <div class="upload-card" id="uploadCard" onclick="document.getElementById('fileInput').click()">
+    <div class="upload-icon">📊</div>
+    <div class="upload-title" id="uploadTitle">Click to upload Excel file</div>
+    <div class="upload-sub" id="uploadSub">Influencers_database.xlsx</div>
+    <input type="file" id="fileInput" accept=".xlsx" style="display:none" onchange="handleFile(event)">
+  </div>
+
+  <div class="controls-row">
+    <select id="batchSize">
+      <option value="5">5 creators (test)</option>
+      <option value="20" selected>20 creators</option>
+      <option value="50">50 creators</option>
+      <option value="100">100 creators</option>
+      <option value="0">All creators</option>
+    </select>
+    <button class="btn-primary" id="runBtn" onclick="runPipeline()" disabled>
+      ▶ Run pipeline
+    </button>
+    <button class="btn-secondary" id="downloadBtn" onclick="downloadResults()" style="display:none">
+      ↓ Download Excel
+    </button>
+  </div>
+
+  <div class="pipeline">
+    <div class="agent" id="a1">
+      <div class="agent-header">
+        <div class="agent-dot" id="d1"></div>
+        <div class="agent-name">Agent 1 — Profile reader</div>
+        <div class="agent-status" id="s1">Idle</div>
+      </div>
+      <div class="agent-log" id="l1"></div>
+    </div>
+    <div class="agent" id="a2">
+      <div class="agent-header">
+        <div class="agent-dot" id="d2"></div>
+        <div class="agent-name">Agent 2 — Content analyzer</div>
+        <div class="agent-status" id="s2">Idle</div>
+      </div>
+      <div class="agent-log" id="l2"></div>
+    </div>
+    <div class="agent" id="a3">
+      <div class="agent-header">
+        <div class="agent-dot" id="d3"></div>
+        <div class="agent-name">Agent 3 — Conflict resolver</div>
+        <div class="agent-status" id="s3">Idle</div>
+      </div>
+      <div class="agent-log" id="l3"></div>
+    </div>
+    <div class="agent" id="a4">
+      <div class="agent-header">
+        <div class="agent-dot" id="d4"></div>
+        <div class="agent-name">Agent 4 — Final judge</div>
+        <div class="agent-status" id="s4">Idle</div>
+      </div>
+      <div class="agent-log" id="l4"></div>
+    </div>
+  </div>
+
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-bar" id="progressBar" style="width:0%"></div>
+  </div>
+
+  <div class="stats" id="statsGrid">
+    <div class="stat"><div class="stat-label">Processed</div><div class="stat-val" id="stTotal">0</div></div>
+    <div class="stat"><div class="stat-label">AI creators</div><div class="stat-val" id="stAI">0</div></div>
+    <div class="stat"><div class="stat-label">Filmmakers</div><div class="stat-val" id="stFilm">0</div></div>
+    <div class="stat"><div class="stat-label">Big names</div><div class="stat-val" id="stBig">0</div></div>
+  </div>
+
+  <div class="results" id="resultsBox">
+    <div class="results-header">
+      <h2>Results</h2>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th class="col-name">Name</th>
+          <th class="col-type">Type</th>
+          <th class="col-sub">Subtype</th>
+          <th class="col-ctype">Content Type</th>
+          <th class="col-goal">Goal</th>
+          <th class="col-conf">Confidence</th>
+          <th class="col-reason">Reasoning</th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody"></tbody>
+    </table>
+  </div>
+
+</div>
+
+<script>
+let workbookData = [];
+let results = [];
+let keyVisible = false;
+
+function toggleKey() {
+  const input = document.getElementById('apiKey');
+  keyVisible = !keyVisible;
+  input.type = keyVisible ? 'text' : 'password';
+  document.querySelector('.api-toggle').textContent = keyVisible ? 'Hide' : 'Show';
+}
+
+function handleFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(evt) {
+    const wb = XLSX.read(evt.target.result, {type:'binary'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const data = XLSX.utils.sheet_to_json(ws, {defval:''});
+    workbookData = data;
+    document.getElementById('uploadCard').classList.add('loaded');
+    document.getElementById('uploadTitle').textContent = file.name;
+    document.getElementById('uploadSub').textContent = `${data.length} creators loaded`;
+    document.getElementById('runBtn').disabled = false;
+  };
+  reader.readAsBinaryString(file);
+}
+
+function setAgent(n, status, text, log) {
+  document.getElementById('d'+n).className = 'agent-dot ' + status;
+  const s = document.getElementById('s'+n);
+  s.className = 'agent-status ' + status;
+  s.textContent = text;
+  if (log) {
+    const l = document.getElementById('l'+n);
+    l.classList.add('show');
+    l.textContent += log + '\n';
+    l.scrollTop = l.scrollHeight;
+  }
+}
+
+function resetAgents() {
+  for (let i = 1; i <= 4; i++) {
+    document.getElementById('d'+i).className = 'agent-dot';
+    document.getElementById('s'+i).className = 'agent-status';
+    document.getElementById('s'+i).textContent = 'Idle';
+    document.getElementById('l'+i).textContent = '';
+    document.getElementById('l'+i).classList.remove('show');
+  }
+}
+
+function badgeType(t) {
+  const m = {'AI creators':'badge-ai','Filmmakers':'badge-film','Marketers & business creators':'badge-marketing','Big names':'badge-bigname'};
+  return m[t] || 'badge-ai';
+}
+
+function badgeConf(c) {
+  return c === 'High' ? 'badge-high' : c === 'Medium' ? 'badge-mid' : 'badge-low';
+}
+
+async function classifyOne(creator, apiKey) {
+  const res = await fetch('http://localhost:5001/classify', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({api_key: apiKey, creator})
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Server error');
+  }
+  return await res.json();
+}
+
+async function runPipeline() {
+  const apiKey = document.getElementById('apiKey').value.trim();
+  if (!apiKey) { alert('Please enter your Anthropic API key'); return; }
+  if (!workbookData.length) { alert('Please upload an Excel file'); return; }
+
+  results = [];
+  resetAgents();
+  document.getElementById('runBtn').disabled = true;
+  document.getElementById('downloadBtn').style.display = 'none';
+  document.getElementById('resultsBox').style.display = 'none';
+  document.getElementById('statsGrid').style.display = 'none';
+
+  const batchVal = document.getElementById('batchSize').value;
+  const seen = new Set();
+  const unique = workbookData.filter(r => {
+    const k = (r['Main Account'] || r['Name'] || '').trim();
+    if (!k || seen.has(k)) return false;
+    seen.add(k); return true;
+  });
+  const batch = batchVal === '0' ? unique : unique.slice(0, parseInt(batchVal));
+
+  document.getElementById('progressWrap').style.display = 'block';
+  for (let i = 1; i <= 4; i++) setAgent(i, 'running', 'Running');
+  setAgent(1, 'running', 'Running', `Starting analysis for ${batch.length} creators...`);
+
+  for (let i = 0; i < batch.length; i++) {
+    const creator = batch[i];
+    const name = creator['Name'] || 'Unknown';
+    const pct = Math.round(((i+1)/batch.length)*100);
+
+    setAgent(1, 'running', 'Running', `[${i+1}/${batch.length}] Profile: ${name}`);
+    setAgent(2, 'running', 'Running', `[${i+1}/${batch.length}] Content signals: ${name}`);
+
+    try {
+      const result = await classifyOne(creator, apiKey);
+
+      if (result.agent3_conflict && result.agent3_conflict !== 'none') {
+        setAgent(3, 'running', 'Running', `[${i+1}] Conflict: ${result.agent3_conflict}`);
+      }
+      setAgent(4, 'running', 'Running', `[${i+1}] ${name} → ${result.type} [${result.confidence}]`);
+
+      results.push({name, ...result, raw: creator});
+    } catch(e) {
+      setAgent(4, 'running', 'Running', `[${i+1}] Error: ${name} — ${e.message}`);
+      results.push({name, type:'—', subtype:'—', confidence:'Low', agent4_decision: e.message, raw: creator});
+    }
+
+    document.getElementById('progressBar').style.width = pct + '%';
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  for (let i = 1; i <= 4; i++) setAgent(i, 'done', 'Done');
+
+  const statsEl = document.getElementById('statsGrid');
+  statsEl.style.display = 'grid';
+  document.getElementById('stTotal').textContent = results.length;
+  document.getElementById('stAI').textContent = results.filter(r=>r.type==='AI creators').length;
+  document.getElementById('stFilm').textContent = results.filter(r=>r.type==='Filmmakers').length;
+  document.getElementById('stBig').textContent = results.filter(r=>r.type==='Big names').length;
+
+  const tbody = document.getElementById('resultsBody');
+  tbody.innerHTML = '';
+  results.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="col-name" style="font-weight:500" title="${r.name}">${r.name}</td>
+      <td class="col-type"><span class="badge ${badgeType(r.type)}">${r.type}</span></td>
+      <td class="col-sub" style="color:#555;font-size:11px" title="${r.subtype||''}">${r.subtype||'—'}</td>
+      <td class="col-ctype" style="color:#555;font-size:11px" title="${r.content_type||''}">${r.content_type||'—'}</td>
+      <td class="col-goal" style="color:#555;font-size:11px" title="${r.content_goal||''}">${r.content_goal||'—'}</td>
+      <td class="col-conf"><span class="badge ${badgeConf(r.confidence)}">${r.confidence}</span></td>
+      <td class="col-reason" style="color:#aaa;font-size:11px" title="${r.agent4_decision||''}">…</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('resultsBox').style.display = 'block';
+  document.getElementById('runBtn').disabled = false;
+  document.getElementById('downloadBtn').style.display = 'flex';
+}
+
+function downloadResults() {
+  const rows = results.map(r => ({
+    ...r.raw,
+    'Type of Creator': r.type,
+    'Sub Type of creator': r.subtype,
+    'Content Type': r.content_type || '',
+    'Content Goal': r.content_goal || '',
+    'Classification Confidence': r.confidence,
+    'Classification Reasoning': r.agent4_decision || ''
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Classified');
+  XLSX.writeFile(wb, 'influencers_classified.xlsx');
+}
+</script>
+</body>
+</html>
