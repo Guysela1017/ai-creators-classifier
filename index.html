@@ -343,15 +343,28 @@ async function runPipeline() {
 }
 
 function downloadResults() {
-  const rows = results.map(r => ({
-    ...r.raw,
-    'Type of Creator': r.type,
-    'Sub Type of creator': r.subtype,
-    'Content Type': r.content_type || '',
-    'Content Goal': r.content_goal || '',
-    'Classification Confidence': r.confidence,
-    'Classification Reasoning': r.agent4_decision || ''
-  }));
+  // Build lookup from classified results by name
+  const classified = {};
+  results.forEach(r => {
+    const key = (r.raw['Main Account'] || r.raw['Name'] || '').trim();
+    if (key) classified[key] = r;
+  });
+
+  // Merge ALL original rows with classification (empty for unprocessed)
+  const rows = workbookData.map(row => {
+    const key = (row['Main Account'] || row['Name'] || '').trim();
+    const r = classified[key];
+    return {
+      ...row,
+      'Type of Creator':          r ? (r.type || '') : '',
+      'Sub Type of creator':      r ? (r.subtype || '') : '',
+      'Content Type':             r ? (r.content_type || '') : '',
+      'Content Goal':             r ? (r.content_goal || '') : '',
+      'Classification Confidence':r ? (r.confidence || '') : '',
+      'Classification Reasoning': r ? (r.agent4_decision || '') : '',
+    };
+  });
+
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Classified');
