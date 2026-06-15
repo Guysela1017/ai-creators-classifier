@@ -431,10 +431,10 @@ def index():
 @app.route('/classify', methods=['POST'])
 def classify():
     data    = request.json
-    api_key = data.get('api_key', '').strip()
     creator = data.get('creator', {})
+    api_key = (os.environ.get('ANTHROPIC_API_KEY') or data.get('api_key', '')).strip()
     if not api_key:
-        return jsonify({'error': 'No API key provided'}), 400
+        return jsonify({'error': 'No API key configured on server'}), 400
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
@@ -459,5 +459,7 @@ def classify():
 
 
 if __name__ == '__main__':
-    print('\n Influencer Classifier (multi-agent) running at http://localhost:5001\n')
-    app.run(debug=True, port=5001)
+    port = int(os.environ.get('PORT', 5001))
+    debug = not os.environ.get('ANTHROPIC_API_KEY')  # no debug in prod
+    print(f'\n Influencer Classifier running on port {port}\n')
+    app.run(host='0.0.0.0', debug=debug, port=port)
