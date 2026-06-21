@@ -120,8 +120,8 @@
     <button class="btn-primary" id="runBtn" onclick="runPipeline()" disabled>
       ▶ Run pipeline
     </button>
-    <button class="btn-secondary" id="downloadBtn" onclick="downloadResults()" style="display:none">
-      ↓ Download Excel
+    <button class="btn-primary" id="downloadBtn" onclick="downloadResults()" style="display:none;background:#16a34a">
+      ↓ Export to Excel
     </button>
   </div>
 
@@ -307,6 +307,7 @@ async function runPipeline() {
     }
 
     document.getElementById('progressBar').style.width = pct + '%';
+    document.getElementById('downloadBtn').style.display = 'flex';
     await new Promise(r => setTimeout(r, 200));
   }
 
