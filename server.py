@@ -204,13 +204,24 @@ def agent_bio(client, bio):
     )
 
 
+CATEGORY_HINT = (
+    'Categories: '
+    '"AI creators" (AI tools/visual/news/technology content), '
+    '"Filmmakers" (cameras/editing/cinematic/film industry), '
+    '"Marketers" (marketing/business/tools/productivity), '
+    '"Big names" (celebrity/very large audience), '
+    '"unclear".'
+)
+
 def agent_title(client, title):
     """Agent 3a: What does the video title signal?"""
     return call_claude(client,
         f'Video title: "{title}"',
-        'You classify YouTube video titles by creator category. '
-        'Return ONLY JSON: {"category": "AI / Filmmaker / Marketer / Entertainment / unclear", '
-        '"confidence": "high/medium/low", "signals": "key words that led to this"}'
+        f'You classify YouTube video titles by creator category. {CATEGORY_HINT} '
+        'Also note the content format: tutorial/how-to, comparison/review, news/update, inspiration, prompt-sharing, or breakdown. '
+        'Return ONLY JSON: {{"category": "AI creators/Filmmakers/Marketers/Big names/unclear", '
+        '"content_format": "tutorial/comparison/news/inspiration/prompt/breakdown/unclear", '
+        '"confidence": "high/medium/low", "signals": "key words that led to this"}}'
     )
 
 
@@ -220,9 +231,12 @@ def agent_transcript(client, title, transcript):
         return {"topic": "no transcript", "category": "unclear", "summary": ""}
     return call_claude(client,
         f'Video: "{title}"\nTranscript: {transcript[:600]}',
-        'You analyze video transcripts to understand content category. '
-        'Return ONLY JSON: {"summary": "what the video is about", '
-        '"category": "AI / Filmmaker / Marketer / unclear", "key_topics": "..."}'
+        f'You analyze video transcripts to understand content category. {CATEGORY_HINT} '
+        'Also note: does the creator teach how to do something (tutorial), share news, compare tools, show creative output, share prompts, or break down a process? '
+        'Return ONLY JSON: {{"summary": "what the video is about in 1 sentence", '
+        '"category": "AI creators/Filmmakers/Marketers/Big names/unclear", '
+        '"content_format": "tutorial/comparison/news/inspiration/prompt/breakdown/unclear", '
+        '"key_topics": "main subjects discussed"}}'
     )
 
 
@@ -233,10 +247,11 @@ def agent_viewer(client, title, frames_b64):
     content = [
         {"type": "text", "text":
             f'Video: "{title}"\n'
-            'These frames are from this YouTube video. '
-            'What is shown? What type of content? '
-            'Return ONLY JSON: {"description": "what you see", '
-            '"category": "AI / Filmmaker / Marketer / unclear", "style": "visual style"}'
+            f'These frames are from this YouTube video. Describe what you see. {CATEGORY_HINT} '
+            'Look for: AI-generated visuals, camera/gear setups, screen recordings of tools, talking-head style, cinematic footage, charts/data. '
+            'Return ONLY JSON: {{"description": "what you see in the frames", '
+            '"category": "AI creators/Filmmakers/Marketers/Big names/unclear", '
+            '"visual_style": "AI-generated/screen-recording/talking-head/cinematic/gear-review/unclear"}}'
         }
     ] + [
         {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": f}}
@@ -260,9 +275,11 @@ def agent_comments(client, title, comments):
     comments_text = '\n'.join(f'• {c}' for c in comments[:6])
     return call_claude(client,
         f'Video: "{title}"\nTop comments:\n{comments_text}',
-        'You analyze YouTube comments to understand content and audience. '
-        'Return ONLY JSON: {"audience_type": "...", "content_impression": "...", '
-        '"category_hint": "AI / Filmmaker / Marketer / unclear"}'
+        f'You analyze YouTube comments to understand who watches this content and what it\'s about. {CATEGORY_HINT} '
+        'Comments about AI tools/prompts → AI creators. Comments about cameras/gear → Filmmakers. Comments about marketing/business → Marketers. '
+        'Return ONLY JSON: {{"audience_type": "who is commenting (e.g. AI enthusiasts, filmmakers, marketers)", '
+        '"content_impression": "what the video seems to be about based on comments", '
+        '"category_hint": "AI creators/Filmmakers/Marketers/Big names/unclear"}}'
     )
 
 
@@ -290,43 +307,89 @@ CREATOR: {creator_name}
 ── AGENT 3: Per-Video Reports (4 videos × 4 agents) ──
 {videos_summary}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-DECISION RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. BIG NAME: If web search shows 1M+ followers or celebrity status → "Big names"
-2. COUNT: Tally AI vs Filmmaker vs Marketer signals across ALL agents above
-3. MAJORITY WINS — AI beats ties when equal
-4. Bio confirms; video evidence is ground truth
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 1 — PICK THE TYPE (read all descriptions carefully)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-TYPE OPTIONS: "AI creators" | "Filmmakers" | "Marketers & business creators" | "Big names"
+"AI creators" — Creators who create content SOLELY about using AI in content creation.
+"Filmmakers" — Creators focused on cameras, editing, cinematic craft, or filmmaking industry.
+"Marketers & business creators" — Creators focused on marketing, business growth, tools for marketers/entrepreneurs.
+"Big names" — Public figures / celebrities with very large audiences (1M+ followers or mainstream recognition) regardless of niche.
 
-SUBTYPES:
-• AI creators: "AI Visual creators / AI Artist" | "AI Tool Announcement" | "AI News Channel" | "AI Technology"
-• Filmmakers: "Tech and Gear" | "Editing & Post-production" | "Cinematic Storytelling" | "Industry Commentary"
-• Marketers & business creators: "Tool Comparisons" | "Creative Content Marketing" | "Productivity & Workflows" | "Industry Updates/Trends"
-• Big names: "Business & Entrepreneurship Icons" | "Technology & Innovation Icons" | "Cultural and Media Icons" | "Celebrity Creators" | "Educational Icons" | "Entertainment"
+RULE: If the creator is a Big Name / celebrity → always "Big names" first, regardless of topic.
+RULE: AI beats Filmmaker ties. A creator who teaches BOTH filmmaking AND AI tools → "AI creators" if AI is central.
+RULE: Video evidence is ground truth. Bio is secondary.
 
-CONTENT TYPE: "Visual how to/tutorial" | "Comparison/Review" | "News & updates" | "Steal my prompt" | "Visual inspiration" | "Step by step breakdown"
-CONTENT GOAL: "GTM" | "Educational" | "Awareness" | "Credibility/Trust" | "Performance"
-FORMAT: "YouTube dedicated" | "YouTube integration" | "Shortform (IG, TikTok, YT shorts)" | "Podcast" | "Newsletter/Blog" | "LinkedIn" | "X" | "Workshop/Event"
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 2 — PICK THE SUBTYPE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Respond ONLY in valid JSON:
+AI creators subtypes:
+• "AI creators" — General AI content creation (use only if none of the below fit)
+• "AI Visual creators / AI Artist" — Content SHOWCASES AI-generated videos, animations, images, visual output (the OUTPUT is the content)
+• "AI Tool Announcement" — Content PRIMARILY shares/promotes/introduces new AI tools and product launches
+• "AI News Channel" — Content PRIMARILY delivers AI news and industry developments (carousel / news format)
+• "AI Technology" — Content PRIMARILY explains, discusses, and analyzes AI technologies, platforms, and innovations
+
+Filmmakers subtypes:
+• "Tech and Gear" — Cameras, lenses, lighting, audio, production equipment reviews/tutorials
+• "Editing & Post-production" — Editing, color grading, sound design, post-production workflows
+• "Cinematic Storytelling" — Short films, creative projects, artistic filmmaking, cinematic narrative
+• "Industry Commentary" — Filmmaking trends, industry developments, future of video production
+
+Marketers & business creators subtypes:
+• "Tool Comparisons" — Comparing, reviewing, evaluating software and tools
+• "Creative Content Marketing" — Creating, scaling, optimizing content to drive business growth
+• "Productivity & Workflows" — Systems, efficiency, automation, workflows, operational improvement
+• "Industry Updates/Trends" — Marketing, business, and industry news, trends, and developments
+
+Big names subtypes:
+• "Business & Entrepreneurship Icons" — Business, entrepreneurship, leadership, company building
+• "Technology & Innovation Icons" — Technology, innovation, emerging trends, future of industries
+• "Cultural and Media Icons" — Shapes mainstream culture, media, and public conversations
+• "Educational Icons" — Teaching, learning, sharing knowledge at scale
+• "Celebrity Creators" — Public figures with large creator audiences around personal brand/lifestyle
+• "Entertainment" — Entertainment, storytelling, humor, challenges, audience engagement
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — PICK THE CONTENT TYPE (what format do the videos take?)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• "Visual how to/tutorial" — Teaches how to use a tool, complete a task, or achieve a specific outcome
+• "Comparison/Review" — Evaluates, compares, or reviews tools, platforms, products, or workflows
+• "News & updates" — Shares industry news, product launches, feature releases, and emerging trends
+• "Visual inspiration" — Showcases ONLY the creative output to inspire (no tutorial, just the result)
+• "Steal my prompt" — Shares prompts, templates, or ready-to-use inputs viewers can replicate
+• "Step by step breakdown" — Deconstructs a process or project into clear stages and explains execution
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 4 — PICK THE MARKETING OBJECTIVE (Artlist's goal for this creator)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• "GTM" — Supports product launches, feature releases, campaigns, strategic business initiatives
+• "Educational" — Teaches audiences how to use Artlist, improve workflows, develop new skills
+• "Awareness" — Increases visibility and recognition of Artlist among target audiences
+• "Credibility/Trust" — Builds confidence through expert endorsement, authentic use cases, industry validation
+• "Performance" — Drives measurable actions: website visits, trials, sign-ups, purchases, affiliate conversions
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Respond ONLY in valid JSON (no markdown, no extra text):
 {{
-  "agent1_profile": "summary of web + bio signals",
-  "agent2_content": "what the 4 video agents collectively showed",
-  "agent3_conflict": "none OR describe conflict and resolution",
-  "agent4_decision": "final reasoning with signal counts",
-  "type": "exact type",
-  "subtype": "exact subtype",
-  "content_type": "exact content type",
-  "content_goal": "exact content goal",
-  "format": "exact format",
+  "agent1_profile": "1-2 sentences: what web search + bio revealed about this creator",
+  "agent2_content": "1-2 sentences: what the video agents collectively showed about their content",
+  "agent3_conflict": "none OR describe any conflicting signals and how you resolved them",
+  "agent4_decision": "final reasoning: which signals led to the type/subtype decision",
+  "type": "exact type string",
+  "subtype": "exact subtype string",
+  "content_type": "exact content type string",
+  "content_goal": "exact marketing objective string",
   "confidence": "High|Medium|Low"
 }}"""
 
     return call_claude(client, prompt,
-        'You are the final classification judge. Synthesize all agent reports and classify the creator.',
-        model=SONNET, max_tokens=1200)
+        'You are the final classification judge for Artlist\'s influencer database. Follow the decision steps exactly and respond only in valid JSON.',
+        model=SONNET, max_tokens=1500)
 
 
 # ─── Main pipeline ────────────────────────────────────────────────────────────
