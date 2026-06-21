@@ -152,7 +152,7 @@ def fetch_frames(video_id, n=3):
         for sec in [int(12*(i+1)/(n+1)) for i in range(n)]:
             fp = os.path.join(tmpdir, f'f{sec}.jpg')
             subprocess.run(['ffmpeg', '-y', '-ss', str(sec), '-i', vf,
-                            '-vframes', '1', '-q:v', '4', '-vf', 'scale=640:-1', fp],
+                            '-vframes', '1', '-q:v', '10', '-vf', 'scale=480:-1', fp],
                            capture_output=True)
             if os.path.exists(fp):
                 frames.append(base64.b64encode(open(fp,'rb').read()).decode())
@@ -166,7 +166,62 @@ def fetch_frames(video_id, n=3):
     return frames
 
 
-# ─── Claude sub-agents (each is one focused API call) ─────────────────────────
+# ─── Taxonomy (cached across all agent calls) ────────────────────────────────
+
+TAXONOMY_SYSTEM = """You are an expert content analyst for Artlist's influencer database.
+
+CREATOR TYPES:
+• "AI creators" — Content SOLELY about using AI in content creation.
+  - "AI Visual creators / AI Artist" — Showcases AI-generated videos, animations, images (the OUTPUT is the content)
+  - "AI Tool Announcement" — Primarily shares/promotes/introduces new AI tools and product launches
+  - "AI News Channel" — Primarily delivers AI news and industry developments (carousel/news format)
+  - "AI Technology" — Primarily explains, discusses, analyzes AI technologies, platforms, innovations
+
+• "Filmmakers" — Content focused on cameras, editing, cinematic craft, or filmmaking industry.
+  - "Tech and Gear" — Cameras, lenses, lighting, audio, production equipment reviews/tutorials
+  - "Editing & Post-production" — Editing, color grading, sound design, post-production workflows
+  - "Cinematic Storytelling" — Short films, creative projects, artistic filmmaking, cinematic narrative
+  - "Industry Commentary" — Filmmaking trends, industry developments, future of video production
+
+• "Marketers & business creators" — Content focused on marketing, business growth, tools for marketers/entrepreneurs.
+  - "Tool Comparisons" — Comparing, reviewing, evaluating software and tools
+  - "Creative Content Marketing" — Creating, scaling, optimizing content to drive business growth
+  - "Productivity & Workflows" — Systems, efficiency, automation, workflows, operational improvement
+  - "Industry Updates/Trends" — Marketing, business, and industry news, trends, developments
+
+• "Big names" — Public figures/celebrities with very large audiences (1M+ or mainstream recognition).
+  - "Business & Entrepreneurship Icons" — Business, entrepreneurship, leadership, company building
+  - "Technology & Innovation Icons" — Technology, innovation, emerging trends, future of industries
+  - "Cultural and Media Icons" — Shapes mainstream culture, media, and public conversations
+  - "Educational Icons" — Teaching, learning, sharing knowledge at scale
+  - "Celebrity Creators" — Public figures with large audiences around personal brand/lifestyle
+  - "Entertainment" — Entertainment, storytelling, humor, challenges, audience engagement
+
+CONTENT FORMATS:
+• "Visual how to/tutorial" — Teaches how to use a tool or achieve a specific outcome
+• "Comparison/Review" — Evaluates, compares, or reviews tools/platforms/products
+• "News & updates" — Shares industry news, product launches, feature releases, emerging trends
+• "Visual inspiration" — Showcases ONLY the creative output to inspire (no tutorial, just the result)
+• "Steal my prompt" — Shares prompts, templates, or ready-to-use inputs viewers can replicate
+• "Step by step breakdown" — Deconstructs a process into clear stages and explains execution
+
+MARKETING OBJECTIVES:
+• "GTM" — Supports product launches, feature releases, campaigns, strategic business initiatives
+• "Educational" — Teaches audiences how to use Artlist, improve workflows, develop skills
+• "Awareness" — Increases visibility and recognition of Artlist among target audiences
+• "Credibility/Trust" — Builds confidence through expert endorsement, authentic use cases, industry validation
+• "Performance" — Drives measurable actions: website visits, trials, sign-ups, purchases, affiliate conversions
+
+DECISION RULES:
+1. Big Name (1M+ or celebrity) → always "Big names" regardless of topic
+2. AI beats Filmmaker in ties — creator teaching BOTH AI + filmmaking → "AI creators" if AI is central
+3. Video evidence > bio > web search (videos are ground truth)
+Respond ONLY in valid JSON."""
+
+# ─── Claude sub-agents ────────────────────────────────────────────────────────
+
+def _parse(text):
+    return json.loads(re.sub(r'```json|```', '', text).strip())
 
 def call_claude(client, user_content, system, model=HAIKU, max_tokens=400):
     try:
@@ -175,14 +230,26 @@ def call_claude(client, user_content, system, model=HAIKU, max_tokens=400):
             system=system,
             messages=[{"role": "user", "content": user_content}]
         )
-        text = re.sub(r'```json|```', '', msg.content[0].text).strip()
-        return json.loads(text)
+        return _parse(msg.content[0].text)
+    except Exception as e:
+        return {"error": str(e)}
+
+def call_claude_cached(client, user_content, model=SONNET, max_tokens=800):
+    """Call Claude with the shared taxonomy system prompt cached."""
+    try:
+        msg = client.messages.create(
+            model=model, max_tokens=max_tokens,
+            system=[{"type": "text", "text": TAXONOMY_SYSTEM,
+                     "cache_control": {"type": "ephemeral"}}],
+            messages=[{"role": "user", "content": user_content}]
+        )
+        return _parse(msg.content[0].text)
     except Exception as e:
         return {"error": str(e)}
 
 
 def agent_web(client, web_text, name):
-    """Agent 1: What does the internet say about this person?"""
+    """Agent 1 (Haiku): What does the internet say about this person?"""
     if not web_text:
         return {"summary": "no results", "follower_hint": "unknown", "niche": "unclear"}
     return call_claude(client,
@@ -194,202 +261,99 @@ def agent_web(client, web_text, name):
 
 
 def agent_bio(client, bio):
-    """Agent 2: What does the channel bio say?"""
+    """Agent 2 (Haiku): What does the channel bio say?"""
     if not bio or len(bio.strip()) < 10:
         return {"signal": "no bio available", "type_hint": "unclear"}
     return call_claude(client,
         f"Channel bio:\n{bio}",
         'You analyze a YouTube channel bio to determine creator type. '
-        'Return ONLY JSON: {"signal": "key phrases from bio", "type_hint": "AI / Filmmaker / Marketer / BigName / unclear"}'
+        'Return ONLY JSON: {"signal": "key phrases from bio", '
+        '"type_hint": "AI creators / Filmmakers / Marketers & business creators / Big names / unclear"}'
     )
 
 
-CATEGORY_HINT = (
-    'Categories: '
-    '"AI creators" (AI tools/visual/news/technology content), '
-    '"Filmmakers" (cameras/editing/cinematic/film industry), '
-    '"Marketers" (marketing/business/tools/productivity), '
-    '"Big names" (celebrity/very large audience), '
-    '"unclear".'
-)
-
-def agent_title(client, title):
-    """Agent 3a: What does the video title signal?"""
-    return call_claude(client,
-        f'Video title: "{title}"',
-        f'You classify YouTube video titles by creator category. {CATEGORY_HINT} '
-        'Also note the content format: tutorial/how-to, comparison/review, news/update, inspiration, prompt-sharing, or breakdown. '
-        'Return ONLY JSON: {{"category": "AI creators/Filmmakers/Marketers/Big names/unclear", '
-        '"content_format": "tutorial/comparison/news/inspiration/prompt/breakdown/unclear", '
-        '"confidence": "high/medium/low", "signals": "key words that led to this"}}'
-    )
-
-
-def agent_transcript(client, title, transcript):
-    """Agent 3b: What does the spoken content say?"""
-    if not transcript:
-        return {"topic": "no transcript", "category": "unclear", "summary": ""}
-    return call_claude(client,
-        f'Video: "{title}"\nTranscript: {transcript[:600]}',
-        f'You analyze video transcripts to understand content category. {CATEGORY_HINT} '
-        'Also note: does the creator teach how to do something (tutorial), share news, compare tools, show creative output, share prompts, or break down a process? '
-        'Return ONLY JSON: {{"summary": "what the video is about in 1 sentence", '
-        '"category": "AI creators/Filmmakers/Marketers/Big names/unclear", '
-        '"content_format": "tutorial/comparison/news/inspiration/prompt/breakdown/unclear", '
-        '"key_topics": "main subjects discussed"}}'
-    )
-
-
-def agent_viewer(client, title, frames_b64):
-    """Agent 3c: What is shown visually in the video?"""
-    if not frames_b64:
-        return {"visual": "no frames", "category": "unclear", "description": ""}
-    content = [
-        {"type": "text", "text":
-            f'Video: "{title}"\n'
-            f'These frames are from this YouTube video. Describe what you see. {CATEGORY_HINT} '
-            'Look for: AI-generated visuals, camera/gear setups, screen recordings of tools, talking-head style, cinematic footage, charts/data. '
-            'Return ONLY JSON: {{"description": "what you see in the frames", '
-            '"category": "AI creators/Filmmakers/Marketers/Big names/unclear", '
-            '"visual_style": "AI-generated/screen-recording/talking-head/cinematic/gear-review/unclear"}}'
-        }
-    ] + [
+def agent_video(client, title, transcript, comments, frames_b64):
+    """Agent 3 (Sonnet): Unified per-video agent — sees title + transcript + comments + frames together."""
+    comments_text = '\n'.join(f'• {c}' for c in comments[:6]) if comments else 'No comments available.'
+    text_block = {
+        "type": "text",
+        "text": (
+            f'Analyze this YouTube video:\n\n'
+            f'TITLE: "{title}"\n\n'
+            f'TRANSCRIPT (first ~700 words):\n{transcript or "No transcript available."}\n\n'
+            f'TOP COMMENTS:\n{comments_text}\n\n'
+            'Based on EVERYTHING above (title + transcript + comments + frames if provided), return ONLY JSON:\n'
+            '{"video_summary": "1 sentence: what this video is about", '
+            '"category": "AI creators/Filmmakers/Marketers & business creators/Big names/unclear", '
+            '"content_format": "Visual how to/tutorial/Comparison/Review/News & updates/Visual inspiration/Steal my prompt/Step by step breakdown/unclear", '
+            '"visual_style": "AI-generated/screen-recording/talking-head/cinematic/gear-review/unclear", '
+            '"key_signals": "strongest signals that led to the category", '
+            '"audience": "who watches this content"}'
+        )
+    }
+    content = [text_block] + [
         {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": f}}
         for f in frames_b64[:3]
     ]
     try:
         msg = client.messages.create(
-            model=HAIKU, max_tokens=400,
+            model=SONNET, max_tokens=600,
+            system=[{"type": "text", "text": TAXONOMY_SYSTEM,
+                     "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": content}]
         )
-        text = re.sub(r'```json|```', '', msg.content[0].text).strip()
-        return json.loads(text)
+        return _parse(msg.content[0].text)
     except Exception as e:
         return {"error": str(e)}
 
 
-def agent_comments(client, title, comments):
-    """Agent 3d: What do the top comments reveal?"""
-    if not comments:
-        return {"impression": "no comments", "category_hint": "unclear"}
-    comments_text = '\n'.join(f'• {c}' for c in comments[:6])
-    return call_claude(client,
-        f'Video: "{title}"\nTop comments:\n{comments_text}',
-        f'You analyze YouTube comments to understand who watches this content and what it\'s about. {CATEGORY_HINT} '
-        'Comments about AI tools/prompts → AI creators. Comments about cameras/gear → Filmmakers. Comments about marketing/business → Marketers. '
-        'Return ONLY JSON: {{"audience_type": "who is commenting (e.g. AI enthusiasts, filmmakers, marketers)", '
-        '"content_impression": "what the video seems to be about based on comments", '
-        '"category_hint": "AI creators/Filmmakers/Marketers/Big names/unclear"}}'
-    )
-
-
 def agent_aggregator(client, creator_name, web_report, bio_report, video_reports):
-    """Final aggregator: receives all sub-agent reports → makes classification."""
+    """Final aggregator (Sonnet + cached taxonomy): synthesizes all agent reports → final classification."""
 
     videos_summary = ''
     for i, vr in enumerate(video_reports, 1):
         videos_summary += f'\n[Video {i}: "{vr["title"]}"]\n'
-        videos_summary += f'  Title agent:      {json.dumps(vr.get("title_agent", {}))}\n'
-        videos_summary += f'  Transcript agent: {json.dumps(vr.get("transcript_agent", {}))}\n'
-        videos_summary += f'  Visual agent:     {json.dumps(vr.get("viewer_agent", {}))}\n'
-        videos_summary += f'  Comments agent:   {json.dumps(vr.get("comments_agent", {}))}\n'
+        if vr.get('title_only'):
+            videos_summary += '  (title only, no deep analysis)\n'
+        else:
+            videos_summary += f'  Analysis: {json.dumps(vr.get("analysis", {}))}\n'
 
-    prompt = f"""You are the final classification judge for Artlist's influencer database.
+    prompt = f"""CREATOR: {creator_name}
 
-CREATOR: {creator_name}
-
-── AGENT 1: Web Search Report ──
+── Agent 1: Web Search ──
 {json.dumps(web_report, indent=2)}
 
-── AGENT 2: Bio Reader Report ──
+── Agent 2: Channel Bio ──
 {json.dumps(bio_report, indent=2)}
 
-── AGENT 3: Per-Video Reports (4 videos × 4 agents) ──
+── Agent 3: Video Analyses (1 agent per video, sees title+transcript+comments+frames) ──
 {videos_summary}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 1 — PICK THE TYPE (read all descriptions carefully)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Now follow these steps using the taxonomy in your system prompt:
 
-"AI creators" — Creators who create content SOLELY about using AI in content creation.
-"Filmmakers" — Creators focused on cameras, editing, cinematic craft, or filmmaking industry.
-"Marketers & business creators" — Creators focused on marketing, business growth, tools for marketers/entrepreneurs.
-"Big names" — Public figures / celebrities with very large audiences (1M+ followers or mainstream recognition) regardless of niche.
+STEP 1 — TYPE: Count AI vs Filmmaker vs Marketer signals across all video analyses + web + bio.
+  Big Name (1M+ / celebrity) always wins. AI beats Filmmaker in ties.
 
-RULE: If the creator is a Big Name / celebrity → always "Big names" first, regardless of topic.
-RULE: AI beats Filmmaker ties. A creator who teaches BOTH filmmaking AND AI tools → "AI creators" if AI is central.
-RULE: Video evidence is ground truth. Bio is secondary.
+STEP 2 — SUBTYPE: Pick the most specific subtype from the taxonomy for the chosen type.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 2 — PICK THE SUBTYPE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — CONTENT TYPE: What format do MOST of the videos follow?
 
-AI creators subtypes:
-• "AI creators" — General AI content creation (use only if none of the below fit)
-• "AI Visual creators / AI Artist" — Content SHOWCASES AI-generated videos, animations, images, visual output (the OUTPUT is the content)
-• "AI Tool Announcement" — Content PRIMARILY shares/promotes/introduces new AI tools and product launches
-• "AI News Channel" — Content PRIMARILY delivers AI news and industry developments (carousel / news format)
-• "AI Technology" — Content PRIMARILY explains, discusses, and analyzes AI technologies, platforms, and innovations
+STEP 4 — MARKETING OBJECTIVE: What is Artlist's best use for this creator?
 
-Filmmakers subtypes:
-• "Tech and Gear" — Cameras, lenses, lighting, audio, production equipment reviews/tutorials
-• "Editing & Post-production" — Editing, color grading, sound design, post-production workflows
-• "Cinematic Storytelling" — Short films, creative projects, artistic filmmaking, cinematic narrative
-• "Industry Commentary" — Filmmaking trends, industry developments, future of video production
-
-Marketers & business creators subtypes:
-• "Tool Comparisons" — Comparing, reviewing, evaluating software and tools
-• "Creative Content Marketing" — Creating, scaling, optimizing content to drive business growth
-• "Productivity & Workflows" — Systems, efficiency, automation, workflows, operational improvement
-• "Industry Updates/Trends" — Marketing, business, and industry news, trends, and developments
-
-Big names subtypes:
-• "Business & Entrepreneurship Icons" — Business, entrepreneurship, leadership, company building
-• "Technology & Innovation Icons" — Technology, innovation, emerging trends, future of industries
-• "Cultural and Media Icons" — Shapes mainstream culture, media, and public conversations
-• "Educational Icons" — Teaching, learning, sharing knowledge at scale
-• "Celebrity Creators" — Public figures with large creator audiences around personal brand/lifestyle
-• "Entertainment" — Entertainment, storytelling, humor, challenges, audience engagement
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 3 — PICK THE CONTENT TYPE (what format do the videos take?)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-• "Visual how to/tutorial" — Teaches how to use a tool, complete a task, or achieve a specific outcome
-• "Comparison/Review" — Evaluates, compares, or reviews tools, platforms, products, or workflows
-• "News & updates" — Shares industry news, product launches, feature releases, and emerging trends
-• "Visual inspiration" — Showcases ONLY the creative output to inspire (no tutorial, just the result)
-• "Steal my prompt" — Shares prompts, templates, or ready-to-use inputs viewers can replicate
-• "Step by step breakdown" — Deconstructs a process or project into clear stages and explains execution
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-STEP 4 — PICK THE MARKETING OBJECTIVE (Artlist's goal for this creator)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-• "GTM" — Supports product launches, feature releases, campaigns, strategic business initiatives
-• "Educational" — Teaches audiences how to use Artlist, improve workflows, develop new skills
-• "Awareness" — Increases visibility and recognition of Artlist among target audiences
-• "Credibility/Trust" — Builds confidence through expert endorsement, authentic use cases, industry validation
-• "Performance" — Drives measurable actions: website visits, trials, sign-ups, purchases, affiliate conversions
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Respond ONLY in valid JSON (no markdown, no extra text):
+Respond ONLY in valid JSON (no markdown):
 {{
-  "agent1_profile": "1-2 sentences: what web search + bio revealed about this creator",
-  "agent2_content": "1-2 sentences: what the video agents collectively showed about their content",
-  "agent3_conflict": "none OR describe any conflicting signals and how you resolved them",
-  "agent4_decision": "final reasoning: which signals led to the type/subtype decision",
-  "type": "exact type string",
-  "subtype": "exact subtype string",
-  "content_type": "exact content type string",
-  "content_goal": "exact marketing objective string",
+  "agent1_profile": "1-2 sentences: what web + bio revealed",
+  "agent2_content": "1-2 sentences: what the video analyses collectively showed",
+  "agent3_conflict": "none OR describe conflicting signals and resolution",
+  "agent4_decision": "final reasoning with signal counts",
+  "type": "exact type",
+  "subtype": "exact subtype",
+  "content_type": "exact content type",
+  "content_goal": "exact marketing objective",
   "confidence": "High|Medium|Low"
 }}"""
 
-    return call_claude(client, prompt,
-        'You are the final classification judge for Artlist\'s influencer database. Follow the decision steps exactly and respond only in valid JSON.',
-        model=SONNET, max_tokens=1500)
+    return call_claude_cached(client, prompt, model=SONNET, max_tokens=1500)
 
 
 # ─── Main pipeline ────────────────────────────────────────────────────────────
@@ -441,24 +405,16 @@ def run_full_pipeline(client, creator):
         for future in concurrent.futures.as_completed(futures):
             raw_videos[futures[future]] = future.result()
 
-    # ── Phase 3: ALL Claude sub-agent calls in parallel ──────────────
-    def run_web_agent():    return agent_web(client, web_text, name)
-    def run_bio_agent():    return agent_bio(client, bio)
-
-    video_agent_futures = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as ex:
-        f_web_agent = ex.submit(run_web_agent)
-        f_bio_agent = ex.submit(run_bio_agent)
-
-        for i, v in enumerate(raw_videos):
-            if v is None:
-                continue
-            video_agent_futures[i] = {
-                'title':      ex.submit(agent_title,      client, v['title']),
-                'transcript': ex.submit(agent_transcript, client, v['title'], v['transcript']),
-                'viewer':     ex.submit(agent_viewer,     client, v['title'], v['frames']),
-                'comments':   ex.submit(agent_comments,   client, v['title'], v['comments']),
-            }
+    # ── Phase 3: 7 Claude calls in parallel ──────────────────────────
+    # 2 Haiku (web + bio) + 4 Sonnet (1 per video, all signals merged) = 7 total
+    with concurrent.futures.ThreadPoolExecutor(max_workers=7) as ex:
+        f_web_agent = ex.submit(agent_web, client, web_text, name)
+        f_bio_agent = ex.submit(agent_bio, client, bio)
+        video_futures = {
+            i: ex.submit(agent_video, client,
+                         v['title'], v['transcript'], v['comments'], v['frames'])
+            for i, v in enumerate(raw_videos) if v is not None
+        }
 
         web_report = f_web_agent.result()
         bio_report = f_bio_agent.result()
@@ -467,16 +423,12 @@ def run_full_pipeline(client, creator):
         for i, v in enumerate(raw_videos):
             if v is None:
                 continue
-            futs = video_agent_futures[i]
             video_reports.append({
-                'title':           v['title'],
-                'title_agent':     futs['title'].result(),
-                'transcript_agent':futs['transcript'].result(),
-                'viewer_agent':    futs['viewer'].result(),
-                'comments_agent':  futs['comments'].result(),
+                'title':    v['title'],
+                'analysis': video_futures[i].result(),
             })
 
-    # Add shallow videos (title only, no agents)
+    # Shallow titles (no agent, title only hint for aggregator)
     for t in shallow_titles:
         video_reports.append({'title': t, 'title_only': True})
 
