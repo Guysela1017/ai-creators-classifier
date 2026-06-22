@@ -249,16 +249,24 @@ function badgeConf(c) {
 }
 
 async function classifyOne(creator) {
-  const res = await fetch(BACKEND + '/classify', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({creator})
-  });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Server error');
+  let res;
+  try {
+    res = await fetch(BACKEND + '/classify', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({creator})
+    });
+  } catch (netErr) {
+    throw new Error('Network error — server may be waking up, try again');
   }
-  return await res.json();
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(`Server error (HTTP ${res.status})`);
+  }
+  if (!res.ok) throw new Error(data.error || 'Server error');
+  return data;
 }
 
 async function runPipeline() {

@@ -221,7 +221,14 @@ Respond ONLY in valid JSON."""
 # ─── Claude sub-agents ────────────────────────────────────────────────────────
 
 def _parse(text):
-    return json.loads(re.sub(r'```json|```', '', text).strip())
+    text = re.sub(r'```json\s*|```\s*', '', text).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        m = re.search(r'\{.*\}', text, re.DOTALL)
+        if m:
+            return json.loads(m.group())
+        raise
 
 def call_claude(client, user_content, system, model=HAIKU, max_tokens=400):
     try:
