@@ -35,7 +35,7 @@ YT_HEADERS = {
 }
 
 HAIKU  = "claude-haiku-4-5-20251001"
-SONNET = "claude-sonnet-4-6"
+SONNET = "claude-haiku-4-5-20251001"
 
 # ─── Raw data fetchers (no Claude) ────────────────────────────────────────────
 
